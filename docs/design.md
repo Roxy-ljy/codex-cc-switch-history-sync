@@ -20,7 +20,7 @@ When cc-switch changes the active Codex provider, the effective `model_provider`
 
 ## Safety model
 
-Every sync creates a small backup under `~\.codex\history-sync-backups`.
+The first sync of each day creates a small backup under `~\.codex\history-sync-backups`.
 
 Install creates a separate backup under `~\.codex\history-sync-tool-backups`.
 

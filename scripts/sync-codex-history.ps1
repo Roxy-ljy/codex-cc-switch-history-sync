@@ -61,20 +61,22 @@ def backup_sqlite(src, dst):
     return True
 
 def make_backup():
-    stamp = time.strftime("%Y%m%d_%H%M%S")
+    stamp = time.strftime("%Y%m%d")
     backup_dir = BACKUP_ROOT / stamp
+    already_exists = backup_dir.exists()
     backup_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("config.toml", "session_index.jsonl"):
-        src = CODEX_HOME / name
-        if src.exists():
-            shutil.copy2(src, backup_dir / name)
-    if CC_SWITCH_DB.exists():
-        backup_sqlite(CC_SWITCH_DB, backup_dir / "cc-switch.db")
-    if CC_SWITCH_SETTINGS.exists():
-        shutil.copy2(CC_SWITCH_SETTINGS, backup_dir / "cc-switch-settings.json")
-    state = CODEX_HOME / "state_5.sqlite"
-    if state.exists():
-        backup_sqlite(state, backup_dir / "state_5.sqlite")
+    if not already_exists:
+        for name in ("config.toml", "session_index.jsonl"):
+            src = CODEX_HOME / name
+            if src.exists():
+                shutil.copy2(src, backup_dir / name)
+        if CC_SWITCH_DB.exists():
+            backup_sqlite(CC_SWITCH_DB, backup_dir / "cc-switch.db")
+        if CC_SWITCH_SETTINGS.exists():
+            shutil.copy2(CC_SWITCH_SETTINGS, backup_dir / "cc-switch-settings.json")
+        state = CODEX_HOME / "state_5.sqlite"
+        if state.exists():
+            backup_sqlite(state, backup_dir / "state_5.sqlite")
     dirs = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True)
     for old in dirs[KEEP_BACKUPS:]:
         shutil.rmtree(old, ignore_errors=True)
@@ -241,6 +243,43 @@ def iter_rollouts():
         for path in root.rglob("rollout-*.jsonl"):
             yield path, archived
 
+def read_session_meta_line(path, max_lines=20):
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            for i, line in enumerate(f):
+                if i >= max_lines:
+                    break
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                if obj.get("type") == "session_meta":
+                    return i, line, obj
+    except Exception:
+        return None
+    return None
+
+def replace_line_streaming(path, target_index, new_line):
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        with path.open("r", encoding="utf-8") as src, tmp.open("w", encoding="utf-8", newline="") as dst:
+            for i, line in enumerate(src):
+                dst.write(new_line if i == target_index else line)
+        os.replace(tmp, path)
+        return True
+    except PermissionError:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+    except Exception:
+        try:
+            tmp.unlink(missing_ok=True)
+        except Exception:
+            pass
+        return False
+
 def normalize_rollout_metadata(backup_dir, target_provider, rewrite_provider):
     backup_path = backup_dir / "rollout_session_meta_backup.jsonl"
     changed = 0
@@ -249,48 +288,35 @@ def normalize_rollout_metadata(backup_dir, target_provider, rewrite_provider):
         for path, _archived in iter_rollouts():
             try:
                 original_stat = path.stat()
-                lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
             except Exception:
                 continue
-            touched = False
-            for i, line in enumerate(lines):
-                try:
-                    obj = json.loads(line)
-                except Exception:
-                    continue
-                if obj.get("type") != "session_meta":
-                    continue
-                payload = obj.get("payload") or {}
-                filename_id = rollout_id_from_name(path)
-                provider_changed = rewrite_provider and payload.get("model_provider") != target_provider
-                id_changed = payload.get("id") != filename_id
-                if provider_changed or id_changed:
-                    backup.write(json.dumps({
-                        "path": str(path),
-                        "line_index": i,
-                        "original_line": line.rstrip("\r\n"),
-                    }, ensure_ascii=False) + "\n")
-                    payload["id"] = filename_id
-                    if rewrite_provider:
-                        payload["model_provider"] = target_provider
-                    obj["payload"] = payload
-                    newline = "\r\n" if line.endswith("\r\n") else "\n"
-                    lines[i] = json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + newline
-                    touched = True
-                break
-            if touched:
-                tmp = path.with_suffix(path.suffix + ".tmp")
-                try:
-                    tmp.write_text("".join(lines), encoding="utf-8", newline="")
-                    os.replace(tmp, path)
+            meta_line = read_session_meta_line(path)
+            if not meta_line:
+                continue
+            i, line, obj = meta_line
+            payload = obj.get("payload") or {}
+            filename_id = rollout_id_from_name(path)
+            provider_changed = rewrite_provider and payload.get("model_provider") != target_provider
+            id_changed = payload.get("id") != filename_id
+            if not provider_changed and not id_changed:
+                continue
+            backup.write(json.dumps({
+                "path": str(path),
+                "line_index": i,
+                "original_line": line.rstrip("\r\n"),
+            }, ensure_ascii=False) + "\n")
+            payload["id"] = filename_id
+            if rewrite_provider:
+                payload["model_provider"] = target_provider
+            obj["payload"] = payload
+            newline = "\r\n" if line.endswith("\r\n") else "\n"
+            new_line = json.dumps(obj, ensure_ascii=False, separators=(",", ":")) + newline
+            try:
+                if replace_line_streaming(path, i, new_line):
                     os.utime(path, (original_stat.st_atime, original_stat.st_mtime))
                     changed += 1
-                except PermissionError:
-                    skipped_locked += 1
-                    try:
-                        tmp.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+            except PermissionError:
+                skipped_locked += 1
     if changed == 0 and backup_path.exists() and backup_path.stat().st_size == 0:
         backup_path.unlink()
     return {
@@ -388,9 +414,10 @@ def repair_state_db(target_provider, rewrite_provider):
     existing = {r["id"]: r for r in con.execute("select id, title from threads")}
     inserted = 0
     for rollout, archived in iter_rollouts():
-        info = parse_rollout(rollout)
-        if info["id"] in existing:
+        rid = rollout_id_from_name(rollout)
+        if rid in existing:
             continue
+        info = parse_rollout(rollout)
         rollout_path = str(rollout)
         con.execute(
             """
@@ -421,29 +448,36 @@ def repair_state_db(target_provider, rewrite_provider):
     }
 
 def rebuild_session_index():
-    state_titles = {}
+    state_rows = {}
     state_path = CODEX_HOME / "state_5.sqlite"
     if state_path.exists():
         con = sqlite3.connect(f"file:{state_path}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
         try:
             for r in con.execute("select id, title, updated_at from threads"):
-                state_titles[r["id"]] = (r["title"], r["updated_at"])
+                state_rows[r["id"]] = {
+                    "id": r["id"],
+                    "title": r["title"] or "Untitled session",
+                    "updated_at": int(r["updated_at"] or 0),
+                }
         finally:
             con.close()
     rows = []
     seen = set()
     for rollout, archived in iter_rollouts():
-        info = parse_rollout(rollout)
-        if info["id"] in seen:
+        rid = rollout_id_from_name(rollout)
+        if rid in seen:
             continue
-        seen.add(info["id"])
-        title, db_updated = state_titles.get(info["id"], (None, None))
-        if title:
-            info["title"] = title
-        if db_updated:
-            info["updated_at"] = max(int(info["updated_at"]), int(db_updated))
-        rows.append(info)
+        seen.add(rid)
+        if rid in state_rows:
+            rows.append(state_rows[rid])
+            continue
+        info = parse_rollout(rollout)
+        rows.append({
+            "id": info["id"],
+            "title": info["title"] or "Untitled session",
+            "updated_at": int(info["updated_at"]),
+        })
     rows.sort(key=lambda r: (r["updated_at"], r["id"]))
     index_path = CODEX_HOME / "session_index.jsonl"
     tmp = index_path.with_suffix(".jsonl.tmp")
