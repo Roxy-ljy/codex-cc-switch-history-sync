@@ -101,6 +101,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore.ps1 -R
 - 中转历史会统一标记为 `ccs`，不会保留每条历史原始中转名；中转列表来自 cc-switch 运行时扫描，不依赖固定服务商名单。
 - 如果你选择关闭 Codex，正在运行的任务可能会被中断。
 - 工具不会备份 `auth.json`，也不会复制 API key 或登录 token。
+- 直接切换到官方的途径登陆可能会导致官方的会话丢失
 - 不要把自己的 `.codex`、`.cc-switch`、备份、`auth.json`、SQLite 数据库提交到 GitHub。
 
 ## 不包含什么
