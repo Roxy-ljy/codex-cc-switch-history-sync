@@ -1,0 +1,28 @@
+# User data / secrets
+.codex/
+.cc-switch/
+auth.json
+*.token
+*.secret
+*.key
+
+# SQLite state and logs
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+
+# Backups and generated runtime files
+history-sync-backups/
+history-sync-tool-backups/
+*.bak*
+*.tmp
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

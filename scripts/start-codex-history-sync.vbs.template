@@ -1,0 +1,2 @@
+﻿Set WshShell = CreateObject("WScript.Shell")
+WshShell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File ""{{WATCHER_PATH}}""", 0, False
