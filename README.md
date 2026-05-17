@@ -1,4 +1,4 @@
-# codex-cc-switch-history-sync
+# 基于 CC Switch 的 Codex 会话同步工具
 
 让 Windows 上的 Codex 在使用 cc-switch 切换官方 / 中转 provider 时，尽量保持同一套本地会话历史可见。
 
