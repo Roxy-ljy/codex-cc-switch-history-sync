@@ -1,8 +1,21 @@
 # 基于 CC Switch 的 Codex 会话同步工具
 
-让 Windows 上的 Codex 在使用 cc-switch 切换官方 / 中转 provider 时，尽量保持同一套本地会话历史可见。
+用于 **Codex 聊天记录同步**、**Codex 历史会话同步**、**Codex 会话记录同步** 的 Windows 小工具。它可以在使用 cc-switch 切换官方 / 中转 provider 时，尽量保持同一套本地 Codex 会话历史可见。
 
-> English: A small Windows helper that keeps local Codex session history visible when switching Codex providers with cc-switch.
+> English: A Windows helper for Codex session history sync, Codex chat history sync, and keeping local Codex conversations visible when switching providers with cc-switch.
+
+## 关键词
+
+如果你在搜索这些问题，这个工具可能适用：
+
+- Codex 聊天记录同步
+- Codex 历史会话同步
+- Codex 会话记录同步
+- Codex conversations / sessions / history sync
+- cc-switch 切换中转后 Codex 历史丢失
+- Codex 切换 provider 后历史会话不可见
+- Codex 本地会话恢复 / session_index 修复
+- `~\.codex\sessions`、`state_5.sqlite`、`session_index.jsonl` 修复
 
 ## 解决什么问题
 
