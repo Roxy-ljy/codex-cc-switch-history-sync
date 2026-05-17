@@ -8,7 +8,7 @@ Codex local history is not a single file. The visible session list depends on:
 - `~\.codex\state_5.sqlite`
 - `~\.codex\session_index.jsonl`
 
-When cc-switch changes the active Codex provider, the effective `model_provider` may change. This can make sessions appear split by provider. The tool normalizes transit providers to `ccs` while leaving the official OpenAI provider as `openai`.
+When cc-switch changes the active Codex provider, the effective `model_provider` may change. This can make sessions appear split by provider. The tool scans cc-switch's current `providers` table at runtime, keeps official Codex providers as `openai`, and normalizes all non-official Codex providers to `ccs`.
 
 ## Components
 

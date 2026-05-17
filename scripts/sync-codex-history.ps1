@@ -1,4 +1,4 @@
-﻿param(
+param(
     [switch]$Quiet
 )
 
@@ -25,9 +25,9 @@ CC_SWITCH_DB = Path(os.environ.get("CC_SWITCH_DB") or (Path.home() / ".cc-switch
 CC_SWITCH_SETTINGS = Path(os.environ.get("CC_SWITCH_SETTINGS") or (Path.home() / ".cc-switch" / "settings.json"))
 BACKUP_ROOT = CODEX_HOME / "history-sync-backups"
 KEEP_BACKUPS = 5
-OFFICIAL_PROVIDER_ID = "codex-official"
 OFFICIAL_MODEL_PROVIDER = "openai"
 TRANSIT_MODEL_PROVIDER = "ccs"
+OFFICIAL_PROVIDER_IDS = None
 
 def log(msg):
     if os.environ.get("CODEX_HISTORY_SYNC_QUIET") != "1":
@@ -126,8 +126,45 @@ def current_codex_provider_id():
     value = data.get("currentProviderCodex")
     return value if isinstance(value, str) and value else None
 
+def is_official_provider_row(row):
+    provider_id = (row["id"] or "").strip().lower()
+    name = (row["name"] or "").strip().lower()
+    keys = row.keys() if hasattr(row, "keys") else []
+    category = ((row["category"] if "category" in keys else "") or "").strip().lower()
+    return (
+        provider_id == "codex-official"
+        or category == "official"
+        or (provider_id == "openai" and "official" in name)
+    )
+
+def official_provider_ids():
+    global OFFICIAL_PROVIDER_IDS
+    if OFFICIAL_PROVIDER_IDS is not None:
+        return OFFICIAL_PROVIDER_IDS
+    ids = set()
+    if CC_SWITCH_DB.exists():
+        try:
+            con = sqlite3.connect(f"file:{CC_SWITCH_DB}?mode=ro", uri=True, timeout=5)
+            con.row_factory = sqlite3.Row
+            try:
+                for row in con.execute("select id, name, category from providers where app_type='codex'"):
+                    if is_official_provider_row(row):
+                        ids.add(row["id"])
+            finally:
+                con.close()
+        except Exception:
+            pass
+    ids.add("codex-official")
+    OFFICIAL_PROVIDER_IDS = ids
+    return OFFICIAL_PROVIDER_IDS
+
 def target_provider_for_provider_id(provider_id):
-    if provider_id == OFFICIAL_PROVIDER_ID:
+    if provider_id in official_provider_ids():
+        return OFFICIAL_MODEL_PROVIDER
+    return TRANSIT_MODEL_PROVIDER
+
+def target_provider_for_provider_row(row):
+    if is_official_provider_row(row):
         return OFFICIAL_MODEL_PROVIDER
     return TRANSIT_MODEL_PROVIDER
 
@@ -183,7 +220,7 @@ def normalize_cc_switch_db(current_provider_id):
     con = sqlite3.connect(str(CC_SWITCH_DB), timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout=10000")
-    rows = list(con.execute("select id, name, settings_config from providers where app_type='codex'"))
+    rows = list(con.execute("select id, name, category, settings_config from providers where app_type='codex'"))
     union = {}
     parsed = []
     for row in rows:
@@ -193,7 +230,7 @@ def normalize_cc_switch_db(current_provider_id):
         parsed.append((row, cfg, text))
     changed = 0
     for row, cfg, old_text in parsed:
-        target_provider = target_provider_for_provider_id(row["id"])
+        target_provider = target_provider_for_provider_row(row)
         text = normalize_codex_config(old_text, target_provider=target_provider)
         text = append_missing_blocks(text, union)
         if text != old_text:
