@@ -90,21 +90,41 @@ function Show-Bar {
     Clear-LowerArea
 }
 
+function Get-CodexDesktopExe {
+    $windowsApps = Join-Path $env:ProgramFiles "WindowsApps"
+    if (Test-Path -LiteralPath $windowsApps) {
+        $packages = Get-ChildItem -LiteralPath $windowsApps -Directory -Filter "OpenAI.Codex_*" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending
+
+        foreach ($package in $packages) {
+            $candidate = Join-Path $package.FullName "app\Codex.exe"
+            if (Test-Path -LiteralPath $candidate) {
+                return $candidate
+            }
+        }
+    }
+
+    return $null
+}
+
 function Open-Codex {
-    $cmd = Get-Command codex -ErrorAction SilentlyContinue
-    if ($cmd -and $cmd.Source) {
-        Start-Process -FilePath $cmd.Source -ArgumentList "app" -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\codex-open.out" -RedirectStandardError "$env:TEMP\codex-open.err"
+    $codexDesktopExe = Get-CodexDesktopExe
+    if ($codexDesktopExe) {
+        Start-Process -FilePath $codexDesktopExe -WorkingDirectory $env:USERPROFILE
         return
     }
 
-    try {
-        Start-Process -FilePath "codex" -ArgumentList "app" -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\codex-open.out" -RedirectStandardError "$env:TEMP\codex-open.err"
+    $codexApp = Get-StartApps -ErrorAction SilentlyContinue |
+        Where-Object { $_.AppID -like "OpenAI.Codex_*!App" } |
+        Select-Object -First 1
+    if ($codexApp) {
+        Start-Process -FilePath "explorer.exe" -ArgumentList ("shell:AppsFolder\{0}" -f $codexApp.AppID)
         return
-    } catch {}
+    }
 
-    $codexExe = Join-Path $env:LOCALAPPDATA "OpenAI\Codex\bin\codex.exe"
-    if (Test-Path -LiteralPath $codexExe) {
-        Start-Process -FilePath $codexExe -ArgumentList "app" -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\codex-open.out" -RedirectStandardError "$env:TEMP\codex-open.err"
+    $codexCli = Join-Path $env:LOCALAPPDATA "OpenAI\Codex\bin\codex.exe"
+    if (Test-Path -LiteralPath $codexCli) {
+        Start-Process -FilePath $codexCli -ArgumentList "app" -WindowStyle Hidden -RedirectStandardOutput "$env:TEMP\codex-open.out" -RedirectStandardError "$env:TEMP\codex-open.err"
     }
 }
 
