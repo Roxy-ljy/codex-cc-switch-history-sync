@@ -433,10 +433,31 @@ def parse_rollout(path):
         "reasoning_effort": meta.get("reasoning_effort"),
     }
 
-def repair_state_db(target_provider, rewrite_provider):
+def load_current_index_titles():
+    index_path = CODEX_HOME / "session_index.jsonl"
+    titles = {}
+    if not index_path.exists():
+        return titles
+    try:
+        with index_path.open("r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    obj = json.loads(line)
+                except Exception:
+                    continue
+                rid = obj.get("id")
+                title = (obj.get("thread_name") or "").strip()
+                if rid and title:
+                    titles[rid] = title
+    except Exception:
+        pass
+    return titles
+
+def repair_state_db(target_provider, rewrite_provider, index_titles=None):
+    index_titles = index_titles or {}
     path = CODEX_HOME / "state_5.sqlite"
     if not path.exists():
-        return {"updated": 0, "inserted": 0, "integrity": "missing"}
+        return {"updated": 0, "title_updated": 0, "inserted": 0, "integrity": "missing"}
     con = sqlite3.connect(str(path), timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout=10000")
@@ -449,6 +470,18 @@ def repair_state_db(target_provider, rewrite_provider):
         )
         updated = con.total_changes - before
     existing = {r["id"]: r for r in con.execute("select id, title from threads")}
+    title_updated = 0
+    for rid, title in index_titles.items():
+        row = existing.get(rid)
+        if row is None or (row["title"] or "") == title:
+            continue
+        before = con.total_changes
+        con.execute(
+            "update threads set title=?, first_user_message=?, preview=? where id=?",
+            (title, title, title, rid),
+        )
+        title_updated += con.total_changes - before
+        existing[rid] = {"id": rid, "title": title}
     inserted = 0
     for rollout, archived in iter_rollouts():
         rid = rollout_id_from_name(rollout)
@@ -478,13 +511,15 @@ def repair_state_db(target_provider, rewrite_provider):
     con.close()
     return {
         "updated": updated,
+        "title_updated": title_updated,
         "inserted": inserted,
         "integrity": integrity,
         "target_provider": target_provider,
         "rewrite_provider": rewrite_provider,
     }
 
-def rebuild_session_index():
+def rebuild_session_index(index_titles=None):
+    index_titles = index_titles or {}
     state_rows = {}
     state_path = CODEX_HOME / "state_5.sqlite"
     if state_path.exists():
@@ -507,12 +542,15 @@ def rebuild_session_index():
             continue
         seen.add(rid)
         if rid in state_rows:
-            rows.append(state_rows[rid])
+            row = dict(state_rows[rid])
+            if rid in index_titles:
+                row["title"] = index_titles[rid]
+            rows.append(row)
             continue
         info = parse_rollout(rollout)
         rows.append({
             "id": info["id"],
-            "title": info["title"] or "Untitled session",
+            "title": index_titles.get(info["id"]) or info["title"] or "Untitled session",
             "updated_at": int(info["updated_at"]),
         })
     rows.sort(key=lambda r: (r["updated_at"], r["id"]))
@@ -534,11 +572,12 @@ def main():
     target_provider = target_provider_for_provider_id(current_provider_id)
     rewrite_history_provider = target_provider == TRANSIT_MODEL_PROVIDER
     backup_dir = make_backup()
+    index_titles = load_current_index_titles()
     rollout_meta_changed = normalize_rollout_metadata(backup_dir, target_provider, rewrite_history_provider)
     cc = normalize_cc_switch_db(current_provider_id)
     config_changed = normalize_current_config(current_provider_id)
-    state = repair_state_db(target_provider, rewrite_history_provider)
-    index = rebuild_session_index()
+    state = repair_state_db(target_provider, rewrite_history_provider, index_titles)
+    index = rebuild_session_index(index_titles)
     log(json.dumps({
         "backup_dir": str(backup_dir),
         "current_provider_id": current_provider_id,
