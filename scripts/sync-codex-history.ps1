@@ -28,6 +28,12 @@ KEEP_BACKUPS = 5
 OFFICIAL_MODEL_PROVIDER = "openai"
 TRANSIT_MODEL_PROVIDER = "ccs"
 OFFICIAL_PROVIDER_IDS = None
+LEGACY_MODEL_VALUES = {
+    "gpt-5.5",
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.2",
+}
 
 def log(msg):
     if os.environ.get("CODEX_HISTORY_SYNC_QUIET") != "1":
@@ -111,6 +117,69 @@ def ensure_history_save_all(text):
     if not found:
         lines.insert(start + 1, 'persistence = "save-all"')
     return "\n".join(lines) + "\n"
+
+def ensure_top_level_setting(text, key, value):
+    text = text or ""
+    lines = text.splitlines()
+    pattern = re.compile(r"^\s*" + re.escape(key) + r"\s*=")
+    first_table = len(lines)
+    for i, line in enumerate(lines):
+        if re.match(r"^\s*\[.+\]\s*$", line):
+            first_table = i
+            break
+    for i in range(first_table):
+        if pattern.match(lines[i]):
+            lines[i] = f'{key} = "{value}"'
+            return "\n".join(lines) + "\n"
+    insert_at = first_table
+    while insert_at > 0 and lines[insert_at - 1].strip() == "":
+        insert_at -= 1
+    lines.insert(insert_at, f'{key} = "{value}"')
+    return "\n".join(lines) + "\n"
+
+def top_level_setting(text, key):
+    lines = (text or "").splitlines()
+    pattern = re.compile(r"^\s*" + re.escape(key) + r'\s*=\s*"([^"]*)"\s*$')
+    for line in lines:
+        if re.match(r"^\s*\[.+\]\s*$", line):
+            break
+        m = pattern.match(line)
+        if m:
+            return m.group(1)
+    return None
+
+def current_model_defaults():
+    path = CODEX_HOME / "config.toml"
+    if not path.exists():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return {}
+    return {
+        "model": top_level_setting(text, "model"),
+        "model_reasoning_effort": top_level_setting(text, "model_reasoning_effort"),
+        "sandbox_mode": top_level_setting(text, "sandbox_mode"),
+        "approval_policy": top_level_setting(text, "approval_policy"),
+    }
+
+def sync_model_defaults(text, defaults):
+    text = text or ""
+    model = (defaults or {}).get("model")
+    if model:
+        current_model = top_level_setting(text, "model")
+        if not current_model or current_model in LEGACY_MODEL_VALUES:
+            text = ensure_top_level_setting(text, "model", model)
+    effort = (defaults or {}).get("model_reasoning_effort")
+    if effort:
+        current_effort = top_level_setting(text, "model_reasoning_effort")
+        if not current_effort:
+            text = ensure_top_level_setting(text, "model_reasoning_effort", effort)
+    for key in ("sandbox_mode", "approval_policy"):
+        value = (defaults or {}).get(key)
+        if value and not top_level_setting(text, key):
+            text = ensure_top_level_setting(text, key, value)
+    return text
 
 def active_provider_name(text):
     m = re.search(r'(?m)^\s*model_provider\s*=\s*"([^"]+)"\s*$', text or "")
@@ -214,9 +283,10 @@ def append_missing_blocks(text, union_blocks):
         text += "\n"
     return text + "\n" + "\n".join(add)
 
-def normalize_cc_switch_db(current_provider_id):
+def normalize_cc_switch_db(current_provider_id, model_defaults=None):
     if not CC_SWITCH_DB.exists():
         return {"providers": 0, "changed": 0}
+    current_target_provider = target_provider_for_provider_id(current_provider_id)
     con = sqlite3.connect(str(CC_SWITCH_DB), timeout=10)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA busy_timeout=10000")
@@ -232,6 +302,8 @@ def normalize_cc_switch_db(current_provider_id):
     for row, cfg, old_text in parsed:
         target_provider = target_provider_for_provider_row(row)
         text = normalize_codex_config(old_text, target_provider=target_provider)
+        if target_provider == current_target_provider:
+            text = sync_model_defaults(text, model_defaults)
         text = append_missing_blocks(text, union)
         if text != old_text:
             cfg["config"] = text
@@ -249,15 +321,16 @@ def normalize_cc_switch_db(current_provider_id):
         "providers": len(rows),
         "changed": changed,
         "current_provider_id": current_provider_id,
-        "current_target_model_provider": target_provider_for_provider_id(current_provider_id),
+        "current_target_model_provider": current_target_provider,
     }
 
-def normalize_current_config(current_provider_id):
+def normalize_current_config(current_provider_id, model_defaults=None):
     path = CODEX_HOME / "config.toml"
     if not path.exists():
         return False
     old = path.read_text(encoding="utf-8")
     new = normalize_codex_config(old, target_provider=target_provider_for_provider_id(current_provider_id))
+    new = sync_model_defaults(new, model_defaults)
     if new != old:
         tmp = path.with_suffix(".toml.tmp")
         tmp.write_text(new, encoding="utf-8")
@@ -572,16 +645,19 @@ def main():
     target_provider = target_provider_for_provider_id(current_provider_id)
     rewrite_history_provider = target_provider == TRANSIT_MODEL_PROVIDER
     backup_dir = make_backup()
+    model_defaults = current_model_defaults()
     index_titles = load_current_index_titles()
     rollout_meta_changed = normalize_rollout_metadata(backup_dir, target_provider, rewrite_history_provider)
-    cc = normalize_cc_switch_db(current_provider_id)
-    config_changed = normalize_current_config(current_provider_id)
+    cc = normalize_cc_switch_db(current_provider_id, model_defaults)
+    config_changed = normalize_current_config(current_provider_id, model_defaults)
     state = repair_state_db(target_provider, rewrite_history_provider, index_titles)
     index = rebuild_session_index(index_titles)
     log(json.dumps({
         "backup_dir": str(backup_dir),
+        "auth_overrides_cleared": os.environ.get("CODEX_AUTH_OVERRIDES_CLEARED") == "1",
         "current_provider_id": current_provider_id,
         "target_model_provider": target_provider,
+        "model_defaults": model_defaults,
         "rewrite_history_provider": rewrite_history_provider,
         "rollout_meta_changed": rollout_meta_changed,
         "cc_switch": cc,
@@ -602,6 +678,22 @@ if ($Quiet) {
 } else {
     Remove-Item Env:\CODEX_HISTORY_SYNC_QUIET -ErrorAction SilentlyContinue
 }
+
+$authOverridesCleared = $false
+try {
+    if (Test-Path Env:\CODEX_API_KEY) {
+        Remove-Item Env:\CODEX_API_KEY -ErrorAction SilentlyContinue
+        $authOverridesCleared = $true
+    }
+} catch {}
+try {
+    if ([Environment]::GetEnvironmentVariable("CODEX_API_KEY", "User")) {
+        [Environment]::SetEnvironmentVariable("CODEX_API_KEY", $null, "User")
+        $authOverridesCleared = $true
+    }
+} catch {}
+
+$env:CODEX_AUTH_OVERRIDES_CLEARED = if ($authOverridesCleared) { "1" } else { "0" }
 $env:CODEX_HOME = $CodexHome
 $env:CC_SWITCH_DB = $CcSwitchDb
 
