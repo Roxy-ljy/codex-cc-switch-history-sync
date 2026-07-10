@@ -4,6 +4,18 @@
 
 > English: A Windows helper for Codex session history sync, Codex chat history sync, and keeping local Codex conversations visible when switching providers with cc-switch.
 
+## 本次更新目标
+
+本次更新主要解决 cc-switch 切换 Codex provider 后的状态残留问题：
+
+- 修复同步窗口偶尔未真正执行，导致历史记录没有完成同步。
+- 防止旧 provider 配置将当前 GPT-5.6 模型回退为 GPT-5.5 / GPT-5.4。
+- 修复 Codex Desktop 使用过期登录缓存后出现的 `401 Unauthorized` / `token_expired`。
+- 区分官方与中转 provider，避免模型配置和登录状态互相覆盖。
+- 兼容新版 Codex Desktop 的 `ChatGPT.exe` 进程和 MSIX 启动方式。
+
+更新后的自动流程为：检测 provider 变化 → 关闭 Codex → 按 provider 类型清理必要缓存 → 同步配置与历史记录 → 重新启动 Codex。
+
 ## 关键词
 
 如果你在搜索这些问题，这个工具可能适用：
