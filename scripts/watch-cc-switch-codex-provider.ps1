@@ -45,29 +45,18 @@ function Get-CurrentCodexProvider {
 function Invoke-CodexHistorySync {
     param([string]$ProviderId)
 
-    $syncMutexCreated = $false
-    $syncMutex = New-Object System.Threading.Mutex($true, "Local\CodexCcSwitchHistorySync-Run", [ref]$syncMutexCreated)
-    if (-not $syncMutexCreated) {
-        return
-    }
-
     try {
         if (-not (Test-Path -LiteralPath $SyncUiScript)) {
             return
         }
 
-        $args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $SyncUiScript)
+        $args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $SyncUiScript, "-Automatic")
         if ($ProviderId) {
             $args += @("-ProviderId", $ProviderId)
         }
         Start-Process -FilePath "powershell.exe" -ArgumentList $args -WindowStyle Normal
     } catch {
         return
-    } finally {
-        try {
-            $syncMutex.ReleaseMutex() | Out-Null
-        } catch {}
-        $syncMutex.Dispose()
     }
 }
 

@@ -26,6 +26,9 @@ Codex 的本地历史会同时依赖 rollout 文件、`state_5.sqlite` 和 `sess
 - 监听 cc-switch 的当前 Codex provider 变化。
 - 运行时扫描 cc-switch 中现有的 Codex provider：官方 OpenAI 保持 `openai`，其余中转统一写成 `ccs`。
 - 修复 Codex 本地历史索引和 SQLite 状态。
+- 保留当前 Codex 顶层模型默认值，避免 cc-switch 旧 provider 配置把 `gpt-5.6-*` 回退成旧模型。
+- 切到中转 provider 时清理会导致 `token_expired` 的 Codex Desktop 过期 web 登录缓存。
+- 删除会覆盖 `auth.json` 的用户级 `CODEX_API_KEY` 环境变量。
 - 切换后弹出一个简洁进度窗口。
 - 成功后自动启动 Codex。
 - 每天首次同步前自动备份关键状态。
@@ -59,14 +62,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 
 1. watcher 检测到 provider 变化；
 2. 弹出同步进度窗口；
-3. 如果 Codex 正在运行，会询问是否关闭；
-4. 自动同步会话历史；
-5. 同步完成后自动启动 Codex。
+3. 自动关闭正在运行的 Codex，避免旧 provider / 旧 token 状态残留；
+4. 如果目标是中转 provider，清理 Codex Desktop 过期 web 登录缓存；
+5. 自动同步会话历史；
+6. 同步完成后自动启动 Codex。
 
 手动同步：
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:CODEX_HOME\sync-codex-history.ps1"
+```
+
+手动运行 UI 包装脚本时仍会询问是否关闭 Codex：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:CODEX_HOME\run-codex-history-sync-ui.ps1"
 ```
 
 ## 恢复 / 卸载
@@ -93,14 +103,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore.ps1 -R
 - `session_index.jsonl`
 - `state_5.sqlite`
 - cc-switch 的 Codex provider 配置
+- Codex Desktop 的 Chromium web 登录缓存（仅中转 provider 自动切换时）
+- 用户级 `CODEX_API_KEY` 环境变量覆盖项
 
 它不会上传任何数据，也不会把你的会话同步到云端。所有处理都在本机完成。
 
 注意：
 
 - 中转历史会统一标记为 `ccs`，不会保留每条历史原始中转名；中转列表来自 cc-switch 运行时扫描，不依赖固定服务商名单。
-- 如果你选择关闭 Codex，正在运行的任务可能会被中断。
-- 工具不会备份 `auth.json`，也不会复制 API key 或登录 token。
+- 自动切换 provider 时会关闭 Codex，正在运行的任务可能会被中断。
+- 工具不会备份 `auth.json`，也不会复制 API key 或登录 token；web 缓存清理前只做本地备份。
 - 直接切换到官方的途径登陆可能会导致官方的会话丢失
 - 不要把自己的 `.codex`、`.cc-switch`、备份、`auth.json`、SQLite 数据库提交到 GitHub。
 
