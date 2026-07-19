@@ -643,7 +643,10 @@ def main():
     CODEX_HOME.mkdir(parents=True, exist_ok=True)
     current_provider_id = current_codex_provider_id()
     target_provider = target_provider_for_provider_id(current_provider_id)
-    rewrite_history_provider = target_provider == TRANSIT_MODEL_PROVIDER
+    # Keep local history visible after switching in either direction. Codex
+    # filters sessions by model_provider, so official history must be
+    # rewritten from ccs back to openai as well.
+    rewrite_history_provider = target_provider in (OFFICIAL_MODEL_PROVIDER, TRANSIT_MODEL_PROVIDER)
     backup_dir = make_backup()
     model_defaults = current_model_defaults()
     index_titles = load_current_index_titles()

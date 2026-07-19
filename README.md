@@ -37,6 +37,7 @@ Codex 的本地历史会同时依赖 rollout 文件、`state_5.sqlite` 和 `sess
 
 - 监听 cc-switch 的当前 Codex provider 变化。
 - 运行时扫描 cc-switch 中现有的 Codex provider：官方 OpenAI 保持 `openai`，其余中转统一写成 `ccs`。
+- 每次切换都会按当前 provider 双向修复 rollout 和 SQLite 中的 `model_provider`，避免切回官方后历史列表为空。
 - 修复 Codex 本地历史索引和 SQLite 状态。
 - 保留当前 Codex 顶层模型默认值，避免 cc-switch 旧 provider 配置把 `gpt-5.6-*` 回退成旧模型。
 - 切到中转 provider 时清理会导致 `token_expired` 的 Codex Desktop 过期 web 登录缓存。

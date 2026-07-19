@@ -8,7 +8,7 @@ Codex local history is not a single file. The visible session list depends on:
 - `~\.codex\state_5.sqlite`
 - `~\.codex\session_index.jsonl`
 
-When cc-switch changes the active Codex provider, the effective `model_provider` may change. This can make sessions appear split by provider. The tool scans cc-switch's current `providers` table at runtime, keeps official Codex providers as `openai`, and normalizes all non-official Codex providers to `ccs`.
+When cc-switch changes the active Codex provider, the effective `model_provider` may change. This can make sessions appear split by provider. The tool scans cc-switch's current `providers` table at runtime, keeps official Codex providers as `openai`, and normalizes all non-official Codex providers to `ccs`. On every switch, rollout metadata and SQLite thread rows are rewritten to the active normalized provider so history remains visible in both directions.
 
 Some cc-switch provider configs can also lag behind the current Codex config. For example, a provider may still contain an older top-level `model = "gpt-5.5"` after the user has moved to `gpt-5.6-*`. The sync step treats older known model IDs as legacy values and replaces them with the active defaults from `~\.codex\config.toml`, but only for providers in the same class as the current provider: transit defaults update transit configs, official defaults update official configs. Runtime defaults such as sandbox and approval mode are inherited only when they already exist in the active config; the tool does not hard-code permissive settings.
 

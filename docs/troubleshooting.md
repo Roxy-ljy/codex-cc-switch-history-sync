@@ -21,13 +21,15 @@ The watcher only triggers when the active Codex provider actually changes.
 
 ## Codex history is still missing
 
-Run a manual sync:
+Close Codex before repairing local history. If sessions are visible under a transit provider but disappear under OpenAI Official, make sure cc-switch currently identifies the official provider, then run a manual sync:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:CODEX_HOME\sync-codex-history.ps1"
 ```
 
 If `CODEX_HOME` is not set, replace it with `~\.codex`.
+
+The sync rewrites rollout metadata and `state_5.sqlite` rows to `openai` for an official provider (or `ccs` for a transit provider), then rebuilds `session_index.jsonl`.
 
 ## The model list still does not show GPT-5.6
 
