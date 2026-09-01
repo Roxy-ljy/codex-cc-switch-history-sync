@@ -1,5 +1,6 @@
 param(
-    [switch]$Quiet
+    [switch]$Quiet,
+    [string]$ProviderId
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +28,6 @@ BACKUP_ROOT = CODEX_HOME / "history-sync-backups"
 KEEP_BACKUPS = 5
 OFFICIAL_MODEL_PROVIDER = "openai"
 TRANSIT_MODEL_PROVIDER = "ccs"
-OFFICIAL_PROVIDER_IDS = None
 LEGACY_MODEL_VALUES = {
     "gpt-5.5",
     "gpt-5.4",
@@ -186,14 +186,31 @@ def active_provider_name(text):
     return m.group(1) if m else None
 
 def current_codex_provider_id():
-    if not CC_SWITCH_SETTINGS.exists():
-        return None
-    try:
-        data = json.loads(CC_SWITCH_SETTINGS.read_text(encoding="utf-8"))
-    except Exception:
-        return None
-    value = data.get("currentProviderCodex")
-    return value if isinstance(value, str) and value else None
+    requested_provider_id = (os.environ.get("CODEX_HISTORY_SYNC_PROVIDER_ID") or "").strip()
+    if CC_SWITCH_DB.exists():
+        try:
+            con = sqlite3.connect(f"file:{CC_SWITCH_DB}?mode=ro", uri=True, timeout=5)
+            try:
+                row = con.execute(
+                    "select id from providers where app_type='codex' and is_current=1 limit 1"
+                ).fetchone()
+            finally:
+                con.close()
+            if row and isinstance(row[0], str) and row[0].strip():
+                return row[0].strip()
+        except Exception:
+            pass
+    if requested_provider_id:
+        return requested_provider_id
+    if CC_SWITCH_SETTINGS.exists():
+        try:
+            data = json.loads(CC_SWITCH_SETTINGS.read_text(encoding="utf-8"))
+            value = data.get("currentProviderCodex")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        except Exception:
+            pass
+    return None
 
 def is_official_provider_row(row):
     provider_id = (row["id"] or "").strip().lower()
@@ -206,31 +223,35 @@ def is_official_provider_row(row):
         or (provider_id == "openai" and "official" in name)
     )
 
-def official_provider_ids():
-    global OFFICIAL_PROVIDER_IDS
-    if OFFICIAL_PROVIDER_IDS is not None:
-        return OFFICIAL_PROVIDER_IDS
-    ids = set()
+def target_provider_for_provider_id(provider_id):
+    normalized_id = (provider_id or "").strip().lower()
+    if not normalized_id:
+        raise RuntimeError(
+            "Unable to determine the active Codex provider from ProviderId, settings.json, or cc-switch.db"
+        )
+    if normalized_id == "codex-official":
+        return OFFICIAL_MODEL_PROVIDER
     if CC_SWITCH_DB.exists():
         try:
             con = sqlite3.connect(f"file:{CC_SWITCH_DB}?mode=ro", uri=True, timeout=5)
             con.row_factory = sqlite3.Row
             try:
-                for row in con.execute("select id, name, category from providers where app_type='codex'"):
-                    if is_official_provider_row(row):
-                        ids.add(row["id"])
+                row = con.execute(
+                    """
+                    select id, name, category from providers
+                    where app_type='codex' and lower(id)=? limit 1
+                    """,
+                    (normalized_id,),
+                ).fetchone()
             finally:
                 con.close()
+            if row:
+                return target_provider_for_provider_row(row)
         except Exception:
             pass
-    ids.add("codex-official")
-    OFFICIAL_PROVIDER_IDS = ids
-    return OFFICIAL_PROVIDER_IDS
-
-def target_provider_for_provider_id(provider_id):
-    if provider_id in official_provider_ids():
-        return OFFICIAL_MODEL_PROVIDER
-    return TRANSIT_MODEL_PROVIDER
+    raise RuntimeError(
+        f"Active Codex provider {provider_id!r} was not found in cc-switch.db; history was not changed"
+    )
 
 def target_provider_for_provider_row(row):
     if is_official_provider_row(row):
@@ -640,10 +661,12 @@ def rebuild_session_index(index_titles=None):
     return {"index_entries": len(rows)}
 
 def main():
-    CODEX_HOME.mkdir(parents=True, exist_ok=True)
     current_provider_id = current_codex_provider_id()
     target_provider = target_provider_for_provider_id(current_provider_id)
-    rewrite_history_provider = target_provider == TRANSIT_MODEL_PROVIDER
+    if os.environ.get("CODEX_HISTORY_SYNC_VALIDATE_ONLY") == "1":
+        return
+    CODEX_HOME.mkdir(parents=True, exist_ok=True)
+    rewrite_history_provider = True
     backup_dir = make_backup()
     model_defaults = current_model_defaults()
     index_titles = load_current_index_titles()
@@ -673,6 +696,22 @@ if __name__ == "__main__":
 $PyPath = Join-Path $TmpDir "sync-codex-history.py"
 Set-Content -LiteralPath $PyPath -Value $PythonCode -Encoding UTF8
 
+$env:CODEX_HOME = $CodexHome
+$env:CC_SWITCH_DB = $CcSwitchDb
+if ($ProviderId) {
+    $env:CODEX_HISTORY_SYNC_PROVIDER_ID = $ProviderId
+} else {
+    Remove-Item Env:\CODEX_HISTORY_SYNC_PROVIDER_ID -ErrorAction SilentlyContinue
+}
+
+$env:CODEX_HISTORY_SYNC_VALIDATE_ONLY = "1"
+python $PyPath
+$providerValidationExitCode = $LASTEXITCODE
+Remove-Item Env:\CODEX_HISTORY_SYNC_VALIDATE_ONLY -ErrorAction SilentlyContinue
+if ($providerValidationExitCode -ne 0) {
+    exit $providerValidationExitCode
+}
+
 if ($Quiet) {
     $env:CODEX_HISTORY_SYNC_QUIET = "1"
 } else {
@@ -694,7 +733,5 @@ try {
 } catch {}
 
 $env:CODEX_AUTH_OVERRIDES_CLEARED = if ($authOverridesCleared) { "1" } else { "0" }
-$env:CODEX_HOME = $CodexHome
-$env:CC_SWITCH_DB = $CcSwitchDb
 
 python $PyPath

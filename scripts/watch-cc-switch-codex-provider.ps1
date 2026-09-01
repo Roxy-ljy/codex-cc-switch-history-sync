@@ -35,11 +35,11 @@ function Get-DbProvider {
 }
 
 function Get-CurrentCodexProvider {
-    $settingsProvider = Get-SettingsProvider
-    if ($settingsProvider) {
-        return $settingsProvider
+    $dbProvider = Get-DbProvider
+    if ($dbProvider) {
+        return $dbProvider
     }
-    return Get-DbProvider
+    return Get-SettingsProvider
 }
 
 function Invoke-CodexHistorySync {
@@ -71,6 +71,7 @@ if (-not (Test-Path -LiteralPath $CcSwitchHome)) {
 }
 
 $script:lastProvider = Get-CurrentCodexProvider
+$script:lastProviderCheck = [DateTime]::UtcNow
 
 $watcher = New-Object System.IO.FileSystemWatcher
 $watcher.Path = $CcSwitchHome
@@ -87,25 +88,25 @@ $subs += Register-ObjectEvent -InputObject $watcher -EventName Renamed
 try {
     while ($true) {
         $event = Wait-Event -Timeout 1
-        if (-not $event) {
-            continue
-        }
-
         $hasRelevantEvent = $false
         while ($event) {
             $name = $event.SourceEventArgs.Name
-            if ($name -eq "settings.json" -or $name -eq "cc-switch.db") {
+            if ($name -in @("settings.json", "cc-switch.db", "cc-switch.db-wal")) {
                 $hasRelevantEvent = $true
             }
             Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue
             $event = Get-Event | Select-Object -First 1
         }
 
-        if (-not $hasRelevantEvent) {
+        $pollDue = ([DateTime]::UtcNow - $script:lastProviderCheck).TotalSeconds -ge 5
+        if (-not $hasRelevantEvent -and -not $pollDue) {
             continue
         }
 
-        Start-Sleep -Milliseconds 1500
+        if ($hasRelevantEvent) {
+            Start-Sleep -Milliseconds 1500
+        }
+        $script:lastProviderCheck = [DateTime]::UtcNow
         $current = Get-CurrentCodexProvider
         if (-not $current -or $current -eq $script:lastProvider) {
             continue
