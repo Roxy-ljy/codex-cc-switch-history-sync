@@ -146,19 +146,12 @@ function Get-CodexWebRoots {
     return $roots | Select-Object -Unique
 }
 
-function Test-IsOfficialCodexProvider {
+function Get-CodexProviderClass {
     param([string]$ProviderId)
-
-    if (-not $ProviderId) {
-        return $false
-    }
-    if ($ProviderId -eq "codex-official") {
-        return $true
-    }
 
     $dbPath = Join-Path $env:USERPROFILE ".cc-switch\cc-switch.db"
     if (-not (Test-Path -LiteralPath $dbPath)) {
-        return $false
+        return $(if ($ProviderId -eq "codex-official") { "official" } else { "unknown" })
     }
 
     try {
@@ -170,15 +163,20 @@ import sqlite3
 
 con = sqlite3.connect(os.environ["CODEX_SYNC_PROVIDER_DB"], timeout=5)
 try:
+    provider_id_arg = os.environ.get("CODEX_SYNC_PROVIDER_ID", "").strip()
     row = con.execute(
-        "select id, name, category from providers where app_type='codex' and id=? limit 1",
-        (os.environ["CODEX_SYNC_PROVIDER_ID"],),
+        "select id, name, category from providers where app_type='codex' and is_current=1 limit 1"
     ).fetchone()
+    if not row and provider_id_arg:
+        row = con.execute(
+            "select id, name, category from providers where app_type='codex' and lower(id)=? limit 1",
+            (provider_id_arg.lower(),),
+        ).fetchone()
 finally:
     con.close()
 
 if not row:
-    print("0")
+    print("unknown")
 else:
     provider_id = (row[0] or "").strip().lower()
     name = (row[1] or "").strip().lower()
@@ -188,12 +186,16 @@ else:
         or category == "official"
         or (provider_id == "openai" and "official" in name)
     )
-    print("1" if official else "0")
+    print("official" if official else "transit")
 '@
         $result = $python | python -
-        return (($result | Select-Object -First 1).Trim() -eq "1")
+        $providerClass = ($result | Select-Object -First 1).Trim()
+        if ($providerClass -in @("official", "transit")) {
+            return $providerClass
+        }
+        return "unknown"
     } catch {
-        return $false
+        return "unknown"
     } finally {
         Remove-Item Env:\CODEX_SYNC_PROVIDER_DB -ErrorAction SilentlyContinue
         Remove-Item Env:\CODEX_SYNC_PROVIDER_ID -ErrorAction SilentlyContinue
@@ -203,22 +205,8 @@ else:
 function Test-ShouldClearCodexAuthCache {
     param([string]$ProviderId)
 
-    if ($ProviderId) {
-        return -not (Test-IsOfficialCodexProvider -ProviderId $ProviderId)
-    }
-
-    $configPath = Join-Path $CodexHome "config.toml"
-    if (-not (Test-Path -LiteralPath $configPath)) {
-        return $false
-    }
-
-    try {
-        $text = Get-Content -LiteralPath $configPath -Raw -Encoding UTF8
-        $match = [regex]::Match($text, '(?m)^\s*model_provider\s*=\s*"([^"]+)"\s*$')
-        return $match.Success -and $match.Groups[1].Value -eq "ccs"
-    } catch {
-        return $false
-    }
+    $providerClass = Get-CodexProviderClass -ProviderId $ProviderId
+    return $providerClass -eq "transit"
 }
 
 function Clear-CodexExpiredAuthCache {
@@ -429,13 +417,20 @@ try {
     }
 
     $job = Start-Job -ScriptBlock {
-        param([string]$ScriptPath)
-        $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath 2>&1
+        param(
+            [string]$ScriptPath,
+            [string]$TargetProviderId
+        )
+        if ($TargetProviderId) {
+            $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath -ProviderId $TargetProviderId 2>&1
+        } else {
+            $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $ScriptPath 2>&1
+        }
         [pscustomobject]@{
             ExitCode = $LASTEXITCODE
             Output = ($out | Out-String)
         }
-    } -ArgumentList $SyncScript
+    } -ArgumentList $SyncScript, $ProviderId
 
     $percent = 12
     while ($job.State -eq "Running") {

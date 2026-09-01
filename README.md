@@ -9,6 +9,7 @@
 本次更新主要解决 cc-switch 切换 Codex provider 后的状态残留问题：
 
 - 修复同步窗口偶尔未真正执行，导致历史记录没有完成同步。
+- 修复历史 provider 只能从官方改到中转、无法从中转改回官方的问题。
 - 防止旧 provider 配置将当前 GPT-5.6 模型回退为 GPT-5.5 / GPT-5.4。
 - 修复 Codex Desktop 使用过期登录缓存后出现的 `401 Unauthorized` / `token_expired`。
 - 区分官方与中转 provider，避免模型配置和登录状态互相覆盖。
@@ -35,8 +36,9 @@ Codex 的本地历史会同时依赖 rollout 文件、`state_5.sqlite` 和 `sess
 
 这个工具会：
 
-- 监听 cc-switch 的当前 Codex provider 变化。
-- 运行时扫描 cc-switch 中现有的 Codex provider：官方 OpenAI 保持 `openai`，其余中转统一写成 `ccs`。
+- 监听 cc-switch 的当前 Codex provider 变化，并将检测到的 ProviderId 传入同步流程。
+- 安全识别目标渠道：以 `cc-switch.db` 的当前 provider 为准，使用 watcher ProviderId 和 `settings.json` 作为回退；无法确定时停止同步，不猜测渠道。
+- 每次切换时双向统一本地历史标记：官方 OpenAI 写成 `openai`，其余中转写成 `ccs`。
 - 修复 Codex 本地历史索引和 SQLite 状态。
 - 保留当前 Codex 顶层模型默认值，避免 cc-switch 旧 provider 配置把 `gpt-5.6-*` 回退成旧模型。
 - 切到中转 provider 时清理会导致 `token_expired` 的 Codex Desktop 过期 web 登录缓存。
@@ -76,7 +78,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 2. 弹出同步进度窗口；
 3. 自动关闭正在运行的 Codex，避免旧 provider / 旧 token 状态残留；
 4. 如果目标是中转 provider，清理 Codex Desktop 过期 web 登录缓存；
-5. 自动同步会话历史；
+5. 按目标 provider 双向同步 rollout、SQLite 与会话索引；
 6. 同步完成后自动启动 Codex。
 
 手动同步：
@@ -84,6 +86,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:CODEX_HOME\sync-codex-history.ps1"
 ```
+
+手动同步会优先从 `cc-switch.db` 的当前记录识别目标 provider，并以 `settings.json` 作为回退；如果无法安全识别，脚本会在改写历史或认证状态前停止。
 
 手动运行 UI 包装脚本时仍会询问是否关闭 Codex：
 
@@ -122,10 +126,10 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore.ps1 -R
 
 注意：
 
-- 中转历史会统一标记为 `ccs`，不会保留每条历史原始中转名；中转列表来自 cc-switch 运行时扫描，不依赖固定服务商名单。
+- 同步会按当前目标渠道统一改写本地历史标记：官方为 `openai`，中转为 `ccs`；因此不会保留每条历史原始中转名。中转列表来自 cc-switch 运行时扫描，不依赖固定服务商名单。
+- 官方与中转之间的往返切换均受支持；同步完成后，历史会按当前目标渠道重新标记并显示。
 - 自动切换 provider 时会关闭 Codex，正在运行的任务可能会被中断。
 - 工具不会备份 `auth.json`，也不会复制 API key 或登录 token；web 缓存清理前只做本地备份。
-- 直接切换到官方的途径登陆可能会导致官方的会话丢失
 - 不要把自己的 `.codex`、`.cc-switch`、备份、`auth.json`、SQLite 数据库提交到 GitHub。
 
 ## 不包含什么

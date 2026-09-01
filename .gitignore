@@ -20,6 +20,8 @@ history-sync-tool-backups/
 *.bak*
 *.tmp
 *.log
+__pycache__/
+*.pyc
 
 # OS / editor
 .DS_Store

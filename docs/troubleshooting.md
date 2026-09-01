@@ -29,6 +29,8 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:CODEX_HOME\sync-co
 
 If `CODEX_HOME` is not set, replace it with `~\.codex`.
 
+Manual sync resolves the active provider from cc-switch's current database row and falls back to `settings.json`. If neither source identifies a provider, the command stops before rewriting rollout or SQLite history. In that case, enable the intended Codex provider in cc-switch and run the command again.
+
 ## The model list still does not show GPT-5.6
 
 For API-key / transit-provider routes, Codex Desktop may show a custom model label instead of a first-class GPT-5.6 preset. The sync script preserves the active top-level `model` and `model_reasoning_effort` from `~\.codex\config.toml`, and propagates them into legacy cc-switch provider configs that still contain older values such as `gpt-5.5`, `gpt-5.4`, `gpt-5.4-mini`, or `gpt-5.2`.
