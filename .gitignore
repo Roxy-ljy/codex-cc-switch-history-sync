@@ -26,3 +26,7 @@ history-sync-tool-backups/
 Thumbs.db
 .vscode/
 .idea/
+
+# Python verification cache
+__pycache__/
+*.pyc

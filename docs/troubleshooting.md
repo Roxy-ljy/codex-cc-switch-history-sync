@@ -21,13 +21,24 @@ The watcher only triggers when the active Codex provider actually changes.
 
 ## Codex history is still missing
 
-Run a manual sync:
+If only provider visibility changed, a manual configuration sync may help:
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:CODEX_HOME\sync-codex-history.ps1"
 ```
 
 If `CODEX_HOME` is not set, replace it with `~\.codex`.
+
+## `failed to read session metadata` / 无法加载消息
+
+Older versions of this tool rewrote session metadata and rebuilt indexes using IDs derived from rollout filenames. This is incompatible with newer paginated Codex sessions.
+
+1. Disable the watcher with `scripts/restore.ps1` (without `-RestoreLatestBackup`) and close Codex. Keep a copy of current session storage and backups before recovery.
+2. Identify the daily backup immediately before the failed switch under `history-sync-backups`. A legacy backup may contain `rollout_session_meta_backup.jsonl`, `state_5.sqlite`, and `session_index.jsonl`.
+3. Restore the recorded original metadata lines for the matching rollouts together with the matching SQLite state and index, while Codex is fully stopped. Preserve/quarantine the current SQLite database and its WAL/SHM together; replacing an open database or mixing old state with a current WAL is unsafe. Do not delete message content or infer IDs from filenames.
+4. Install this version and reopen Codex. It preserves session storage on future switches.
+
+The ordinary `-RestoreLatestBackup` option restores an *installation* backup, not the daily pre-switch metadata backup. Recovery must match the affected files and backup time; a fresh sync does not repair already corrupted metadata. Existing backups may contain secrets and should not be posted in issues.
 
 ## The model list still does not show GPT-5.6
 

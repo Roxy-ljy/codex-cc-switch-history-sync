@@ -4,6 +4,12 @@
 
 > English: A Windows helper for Codex session history sync, Codex chat history sync, and keeping local Codex conversations visible when switching providers with cc-switch.
 
+## 新版 Codex 兼容性修复（2026-11-06）
+
+旧版脚本根据 rollout 文件名截取线程 ID，可能把新版分页会话的元数据写成无效 ID，并重建错误索引，造成 `failed to read session metadata` 或“无法加载消息”。本版移除了所有 rollout、SQLite 会话状态和会话索引改写代码，仅同步 provider 配置。更新后重新运行安装脚本以替换后台 watcher 使用的脚本。
+
+本工具不再修复历史数据，也不保证切换官方/中转后所有旧 provider 的会话都可见。已经发生的元数据损坏需要从匹配的切换前备份恢复，见 [故障排查](docs/troubleshooting.md)。
+
 ## 本次更新目标
 
 本次更新主要解决 cc-switch 切换 Codex provider 后的状态残留问题：
@@ -14,7 +20,7 @@
 - 区分官方与中转 provider，避免模型配置和登录状态互相覆盖。
 - 兼容新版 Codex Desktop 的 `ChatGPT.exe` 进程和 MSIX 启动方式。
 
-更新后的自动流程为：检测 provider 变化 → 关闭 Codex → 按 provider 类型清理必要缓存 → 同步配置与历史记录 → 重新启动 Codex。
+更新后的自动流程为：检测 provider 变化 → 关闭 Codex → 按 provider 类型清理必要缓存 → 同步 provider 配置 → 重新启动 Codex。
 
 ## 关键词
 
@@ -26,8 +32,6 @@
 - Codex conversations / sessions / history sync
 - cc-switch 切换中转后 Codex 历史丢失
 - Codex 切换 provider 后历史会话不可见
-- Codex 本地会话恢复 / session_index 修复
-- `~\.codex\sessions`、`state_5.sqlite`、`session_index.jsonl` 修复
 
 ## 解决什么问题
 
@@ -37,7 +41,7 @@ Codex 的本地历史会同时依赖 rollout 文件、`state_5.sqlite` 和 `sess
 
 - 监听 cc-switch 的当前 Codex provider 变化。
 - 运行时扫描 cc-switch 中现有的 Codex provider：官方 OpenAI 保持 `openai`，其余中转统一写成 `ccs`。
-- 修复 Codex 本地历史索引和 SQLite 状态。
+- 保留 Codex 原生会话存储，不改写 rollout、SQLite 会话状态或会话索引。
 - 保留当前 Codex 顶层模型默认值，避免 cc-switch 旧 provider 配置把 `gpt-5.6-*` 回退成旧模型。
 - 切到中转 provider 时清理会导致 `token_expired` 的 Codex Desktop 过期 web 登录缓存。
 - 删除会覆盖 `auth.json` 的用户级 `CODEX_API_KEY` 环境变量。
@@ -76,7 +80,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install.ps1
 2. 弹出同步进度窗口；
 3. 自动关闭正在运行的 Codex，避免旧 provider / 旧 token 状态残留；
 4. 如果目标是中转 provider，清理 Codex Desktop 过期 web 登录缓存；
-5. 自动同步会话历史；
+5. 自动同步 provider 配置；
 6. 同步完成后自动启动 Codex。
 
 手动同步：
@@ -109,11 +113,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore.ps1 -R
 
 ## 风险说明
 
-这个工具会修改 Codex 本地状态索引，包括：
+日常切换会修改以下配置或缓存：
 
 - `config.toml`
-- `session_index.jsonl`
-- `state_5.sqlite`
 - cc-switch 的 Codex provider 配置
 - Codex Desktop 的 Chromium web 登录缓存（仅中转 provider 自动切换时）
 - 用户级 `CODEX_API_KEY` 环境变量覆盖项
@@ -122,9 +124,9 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\restore.ps1 -R
 
 注意：
 
-- 中转历史会统一标记为 `ccs`，不会保留每条历史原始中转名；中转列表来自 cc-switch 运行时扫描，不依赖固定服务商名单。
+- 中转的配置标识统一为 `ccs`；历史会话中的原始 provider 和线程 ID 保持不变。
 - 自动切换 provider 时会关闭 Codex，正在运行的任务可能会被中断。
-- 工具不会备份 `auth.json`，也不会复制 API key 或登录 token；web 缓存清理前只做本地备份。
+- 配置、cc-switch 数据库和 web 缓存备份可能包含凭据，只保存在本机，不应上传或分享。
 - 直接切换到官方的途径登陆可能会导致官方的会话丢失
 - 不要把自己的 `.codex`、`.cc-switch`、备份、`auth.json`、SQLite 数据库提交到 GitHub。
 
